@@ -12,41 +12,50 @@ void loop() {
   }
 }
 
+#define MIDI_MESSAGE_NONE 0 // Special type reserved as invalid message
+
+#define MIDI_MESSAGE_NOTE_OFF 1
 struct MIDIMessageNoteOff {
   int channel;
   int note;
   int velocity;
 };
 
+#define MIDI_MESSAGE_NOTE_ON 2
 struct MIDIMessageNoteOn {
   int channel;
   int note;
   int velocity;
 };
 
+#define MIDI_MESSAGE_NOTE_AFTERTOUCH 3
 struct MIDIMessageNoteAftertouch {
   int channel;
   int note;
   int velocity;
 };
 
+#define MIDI_MESSAGE_CONTROL_CHANGE 4
 struct MIDIMessageControlChange {
   int channel;
   int control;
   int value;
 };
 
+#define MIDI_MESSAGE_PROGRAM_CHANGE 5
 struct MIDIMessageProgramChange {
   int channel;
   int program;
 };
 
+#define MIDI_MESSAGE_CHANNEL_AFTERTOUCH 6
 struct MIDIMessageChannelAftertouch {
   int channel;
   int note;
   int velocity;
 };
 
+#define MIDI_MESSAGE_PITCH_BEND 7
 struct MIDIMessagePitchBend {
   int channel;
   int value;
@@ -62,13 +71,27 @@ class MIDI {
 
   private:
   Stream* _stream;
+
   int _run_status; // Current running status or 0 if none
-  int _avail;
+  int _data1; // Buffered first data byte or -1 if none
+  int _data2; // Buffered second data byte or -1 if none
+
+  int _msg_type; // Message type present in _msg (MIDI_MESSAGE_###)
+  union {
+    struct MIDIMessageNoteOff note_off;
+    struct MIDIMessageNoteOn note_on;
+    struct MIDIMessageNoteAftertouch note_aftertouch;
+    struct MIDIMessageControlChange control_change;
+    struct MIDIMessageProgramChange program_change;
+    struct MIDIMessageChannelAftertouch channel_aftertouch;
+    struct MIDIMessagePitchBend pitch_bend;
+  } _msg;
 };
 
 MIDI::MIDI() {
   _stream = NULL;
-  _avail = 0;
+  _run_status = 0;
+  _msg_type = MIDI_MESSAGE_NONE;
 }
 
 void MIDI::begin(Stream* stream) {
@@ -86,38 +109,46 @@ void MIDI::begin(HardwareSerial& serial, int rxPin, int txPin) {
 }
 
 void MIDI::recv() {
-  if(!_stream->available()) return;
-  int status = _stream->peek(); // Read status
-  if(status < 0) return;
+  if(!_stream) return;
 
-  int status_present = 1;
-  if(!(status & 0x80)) {
-    status_present = 0;
-    if(_run_status) status = _run_status; // Keep running status
-    else return; // Ignore unexpected data byte
+  int byte = _stream->read(); // Read new byte
+  if(byte < 0) return;
+
+  // System Real Time messages
+  if(byte >= 0xF8 && byte <= 0xFE) return;
+  if(byte == 0xFF) return; // System Reset
+
+  int status = _run_status;
+  int data = -1;
+  if((byte & 0x80) > 0) { // Read a new status byte
+    status = byte;
+    _data1 = -1;
+    _data2 = -1;
+
+    // Check for next data byte
+    byte = _stream->peek();
+    if(byte >= 0 && byte <= 0x80) {
+      _stream->read();
+      data = byte;
+    }
   }
 
-  // NOTE: page spec 93 byte reading, running status
+  if((status & 0x80) == 0) return; // No current status, discard byte
 
-  int count = status_present; // Need at least one byte if status
-  int num_data_bytes[] = {2, 2, 2, 2, 1, 1, 2};
-  if((status >> 4) <= 0xE) count += num_data_bytes[(status >> 4) & 0x7];
-  if(_stream->available() < count) return;
+  // Set _data1 or _data2 if a new data byte was read
+  if(data >= 0 && _data1 < 0) _data1 = data;
+  else if(data >= 0 && _data2 < 0) _data2 = data;
 
-  int data1 = -1;
-  int data2 = -1;
+  // Set or unset currently active running status
+  if(status >= 0x80 && status <= 0xEF) _run_status = status;
+  else _run_status = 0;
 
-  if(count > 0) _stream->read(); // Finally consume status byte
-  if(count > 1) {
-    data1 = _stream->read();
-    if(data1 < 0) return;
+  if(status == 0xF0) return; // Start of System Exclusive (SysEx) message
+  if(status == 0xF7) return; // EOX (end of SysEx)
+
+  if((status & 0xF0) == 0x80) { // Note off
+    if(_data1 < 0 || _data2 < 0) return;
+
+    _msg_type = MIDI_MESSAGE_NOTE_OFF;
   }
-  if(count > 2) {
-    data2 = _stream->read();
-    if(data2 < 0) return;
-  }
-
-  // TODO: Ignore real time status
-  // TODO: Ignore SysEx
-  // TODO: Set _run_status based on status here
 }
