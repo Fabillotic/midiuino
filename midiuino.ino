@@ -51,7 +51,6 @@ struct MIDIMessageProgramChange {
 #define MIDI_MESSAGE_CHANNEL_AFTERTOUCH 6
 struct MIDIMessageChannelAftertouch {
   int channel;
-  int note;
   int velocity;
 };
 
@@ -61,22 +60,8 @@ struct MIDIMessagePitchBend {
   int value;
 };
 
-class MIDI {
-  public:
-  MIDI();
-  void begin(Stream* stream);
-  void begin(HardwareSerial& serial);
-  void begin(HardwareSerial& serial, int rxPin, int txPin);
-  void recv();
-
-  private:
-  Stream* _stream;
-
-  int _run_status; // Current running status or 0 if none
-  int _data1; // Buffered first data byte or -1 if none
-  int _data2; // Buffered second data byte or -1 if none
-
-  int _msg_type; // Message type present in _msg (MIDI_MESSAGE_###)
+struct MIDIMessage {
+  int type; // Message type present in data (MIDI_MESSAGE_###)
   union {
     struct MIDIMessageNoteOff note_off;
     struct MIDIMessageNoteOn note_on;
@@ -85,13 +70,28 @@ class MIDI {
     struct MIDIMessageProgramChange program_change;
     struct MIDIMessageChannelAftertouch channel_aftertouch;
     struct MIDIMessagePitchBend pitch_bend;
-  } _msg;
+  } data;
+};
+
+class MIDI {
+  public:
+  MIDI();
+  void begin(Stream* stream);
+  void begin(HardwareSerial& serial);
+  void begin(HardwareSerial& serial, int rxPin, int txPin);
+  int recv(MIDIMessage *msg);
+
+  private:
+  Stream* _stream;
+
+  int _run_status; // Current running status or 0 if none
+  int _data1; // Buffered first data byte or -1 if none
+  int _data2; // Buffered second data byte or -1 if none
 };
 
 MIDI::MIDI() {
   _stream = NULL;
   _run_status = 0;
-  _msg_type = MIDI_MESSAGE_NONE;
 }
 
 void MIDI::begin(Stream* stream) {
@@ -108,15 +108,18 @@ void MIDI::begin(HardwareSerial& serial, int rxPin, int txPin) {
   _stream = &serial;
 }
 
-void MIDI::recv() {
-  if(!_stream) return;
+/* Receive MIDI message
+ * Returns 1 on success, otherwise 0.
+ */
+int MIDI::recv(MIDIMessage *msg) {
+  if(!_stream) return 0;
 
   int byte = _stream->read(); // Read new byte
-  if(byte < 0) return;
+  if(byte < 0) return 0;
 
   // System Real Time messages
-  if(byte >= 0xF8 && byte <= 0xFE) return;
-  if(byte == 0xFF) return; // System Reset
+  if(byte >= 0xF8 && byte <= 0xFE) return 0;
+  if(byte == 0xFF) return 0; // System Reset
 
   int status = _run_status;
   int data = -1;
@@ -133,7 +136,7 @@ void MIDI::recv() {
     }
   }
 
-  if((status & 0x80) == 0) return; // No current status, discard byte
+  if((status & 0x80) == 0) return 0; // No current status, discard byte
 
   // Set _data1 or _data2 if a new data byte was read
   if(data >= 0 && _data1 < 0) _data1 = data;
@@ -143,12 +146,65 @@ void MIDI::recv() {
   if(status >= 0x80 && status <= 0xEF) _run_status = status;
   else _run_status = 0;
 
-  if(status == 0xF0) return; // Start of System Exclusive (SysEx) message
-  if(status == 0xF7) return; // EOX (end of SysEx)
+  if(status == 0xF0) return 0; // Start of System Exclusive (SysEx) message
+  if(status == 0xF7) return 0; // EOX (end of SysEx)
 
   if((status & 0xF0) == 0x80) { // Note off
-    if(_data1 < 0 || _data2 < 0) return;
+    if(_data1 < 0 || _data2 < 0) return 0;
 
-    _msg_type = MIDI_MESSAGE_NOTE_OFF;
+    msg->type = MIDI_MESSAGE_NOTE_OFF;
+    msg->data.note_off.channel = (status & 0xF) + 1;
+    msg->data.note_off.note = _data1;
+    msg->data.note_off.velocity = _data2;
   }
+  else if((status & 0xF0) == 0x90) { // Note on
+    if(_data1 < 0 || _data2 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_NOTE_ON;
+    msg->data.note_on.channel = (status & 0xF) + 1;
+    msg->data.note_on.note = _data1;
+    msg->data.note_on.velocity = _data2;
+  }
+  else if((status & 0xF0) == 0xA0) { // Note Aftertouch
+    if(_data1 < 0 || _data2 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_NOTE_AFTERTOUCH;
+    msg->data.note_aftertouch.channel = (status & 0xF) + 1;
+    msg->data.note_aftertouch.note = _data1;
+    msg->data.note_aftertouch.velocity = _data2;
+  }
+  else if((status & 0xF0) == 0xB0) { // Control Change
+    if(_data1 < 0 || _data2 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_CONTROL_CHANGE;
+    msg->data.control_change.channel = (status & 0xF) + 1;
+    msg->data.control_change.control = _data1;
+    msg->data.control_change.value = _data2;
+  }
+  else if((status & 0xF0) == 0xC0) { // Program Change
+    if(_data1 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_PROGRAM_CHANGE;
+    msg->data.program_change.channel = (status & 0xF) + 1;
+    msg->data.program_change.program = _data1;
+  }
+  else if((status & 0xF0) == 0xD0) { // Channel Aftertouch
+    if(_data1 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_CHANNEL_AFTERTOUCH;
+    msg->data.channel_aftertouch.channel = (status & 0xF) + 1;
+    msg->data.channel_aftertouch.velocity = _data1;
+  }
+  else if((status & 0xF0) == 0xE0) { // Pitch Bend
+    if(_data1 < 0 || _data2 < 0) return 0;
+
+    msg->type = MIDI_MESSAGE_PITCH_BEND;
+    msg->data.pitch_bend.channel = (status & 0xF) + 1;
+    msg->data.pitch_bend.value = (_data2 << 7) | _data1;
+  }
+  else {
+    return 0;
+  }
+
+  return 1;
 }
