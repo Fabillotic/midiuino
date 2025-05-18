@@ -73,9 +73,8 @@ class MIDIReceiver {
   private:
   Stream* _stream;
 
-  int _status; // Most recently read status or 0 if none
-  int _data1; // Buffered first data byte or -1 if none
-  int _data2; // Buffered second data byte or -1 if none
+  int _status; // Last read status or 0 if not set
+  int _data_buf; // Single byte buffer for last read data byte or -1 if not set
 };
 
 #endif
