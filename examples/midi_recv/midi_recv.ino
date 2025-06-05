@@ -1,4 +1,4 @@
-#include "midiuino.h"
+#include <midiuino.h>
 
 MIDIReceiver midi;
 
