@@ -30,6 +30,13 @@ MIDIReceiver::MIDIReceiver() {
   _stream = NULL;
   _status = 0;
   _data_buf = -1;
+  _callbacks.note_off = NULL;
+  _callbacks.note_on = NULL;
+  _callbacks.note_aftertouch = NULL;
+  _callbacks.control_change = NULL;
+  _callbacks.program_change = NULL;
+  _callbacks.channel_aftertouch = NULL;
+  _callbacks.pitch_bend = NULL;
 }
 
 void MIDIReceiver::begin(Stream &stream) {
@@ -121,6 +128,65 @@ int midi_message_from_bytes(int status, int data1, int data2, MIDIMessage *msg) 
   }
   else { // Unrecognized status byte
     return 0;
+  }
+}
+
+void MIDIReceiver::register_note_off(midi_callback_note_off_t callback) {
+  _callbacks.note_off = callback;
+}
+
+void MIDIReceiver::register_note_on(midi_callback_note_on_t callback) {
+  _callbacks.note_on = callback;
+}
+
+void MIDIReceiver::register_note_aftertouch(midi_callback_note_aftertouch_t callback) {
+  _callbacks.note_aftertouch = callback;
+}
+
+void MIDIReceiver::register_control_change(midi_callback_control_change_t callback) {
+  _callbacks.control_change = callback;
+}
+
+void MIDIReceiver::register_program_change(midi_callback_program_change_t callback) {
+  _callbacks.program_change = callback;
+}
+
+void MIDIReceiver::register_channel_aftertouch(midi_callback_channel_aftertouch_t callback) {
+  _callbacks.channel_aftertouch = callback;
+}
+
+void MIDIReceiver::register_pitch_bend(midi_callback_pitch_bend_t callback) {
+  _callbacks.pitch_bend = callback;
+}
+
+void MIDIReceiver::recv() {
+  MIDIMessage msg;
+
+  if(!recv(&msg)) return;
+  if(msg.type == MIDI_MESSAGE_NOTE_OFF && _callbacks.note_off) {
+    _callbacks.note_off(msg.data.note_off.channel, msg.data.note_off.note,
+        msg.data.note_off.velocity);
+  }
+  else if(msg.type == MIDI_MESSAGE_NOTE_ON && _callbacks.note_on) {
+    _callbacks.note_on(msg.data.note_on.channel, msg.data.note_on.note,
+        msg.data.note_on.velocity);
+  }
+  else if(msg.type == MIDI_MESSAGE_NOTE_AFTERTOUCH && _callbacks.note_aftertouch) {
+    _callbacks.note_aftertouch(msg.data.note_aftertouch.channel, msg.data.note_aftertouch.note,
+        msg.data.note_aftertouch.velocity);
+  }
+  else if(msg.type == MIDI_MESSAGE_CONTROL_CHANGE && _callbacks.control_change) {
+    _callbacks.control_change(msg.data.control_change.channel, msg.data.control_change.control,
+        msg.data.control_change.value);
+  }
+  else if(msg.type == MIDI_MESSAGE_PROGRAM_CHANGE && _callbacks.program_change) {
+    _callbacks.program_change(msg.data.program_change.channel, msg.data.program_change.program);
+  }
+  else if(msg.type == MIDI_MESSAGE_CHANNEL_AFTERTOUCH && _callbacks.channel_aftertouch) {
+    _callbacks.channel_aftertouch(msg.data.channel_aftertouch.channel, msg.data.channel_aftertouch.velocity);
+  }
+  else if(msg.type == MIDI_MESSAGE_PITCH_BEND && _callbacks.pitch_bend) {
+    _callbacks.pitch_bend(msg.data.pitch_bend.channel, msg.data.pitch_bend.value);
   }
 }
 

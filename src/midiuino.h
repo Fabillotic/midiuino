@@ -89,15 +89,41 @@ struct MIDIMessage {
   } data;
 };
 
+typedef void(*midi_callback_note_off_t)(int, int, int);        // channel, note, velocity
+typedef void(*midi_callback_note_on_t)(int, int, int);         // channel, note, velocity
+typedef void(*midi_callback_note_aftertouch_t)(int, int, int); // channel, note, velocity
+typedef void(*midi_callback_control_change_t)(int, int, int);  // channel, control, value
+typedef void(*midi_callback_program_change_t)(int, int);       // channel, program
+typedef void(*midi_callback_channel_aftertouch_t)(int, int);   // channel, velocity
+typedef void(*midi_callback_pitch_bend_t)(int, int);           // channel, value
+
+struct MIDICallbacks {
+  midi_callback_note_off_t note_off;
+  midi_callback_note_on_t note_on;
+  midi_callback_note_aftertouch_t note_aftertouch;
+  midi_callback_control_change_t control_change;
+  midi_callback_program_change_t program_change;
+  midi_callback_channel_aftertouch_t channel_aftertouch;
+  midi_callback_pitch_bend_t pitch_bend;
+};
+
 class MIDIReceiver {
   public:
   MIDIReceiver();
   void begin(Stream &stream);
   int recv(MIDIMessage *msg);
+  void recv();
+  void register_note_off(midi_callback_note_off_t callback);
+  void register_note_on(midi_callback_note_on_t callback);
+  void register_note_aftertouch(midi_callback_note_aftertouch_t callback);
+  void register_control_change(midi_callback_control_change_t callback);
+  void register_program_change(midi_callback_program_change_t callback);
+  void register_channel_aftertouch(midi_callback_channel_aftertouch_t callback);
+  void register_pitch_bend(midi_callback_pitch_bend_t callback);
 
   private:
   Stream* _stream;
-
+  MIDICallbacks _callbacks;
   int _status; // Last read status or 0 if not set
   int _data_buf; // Single byte buffer for last read data byte or -1 if not set
 };
